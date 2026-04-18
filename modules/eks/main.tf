@@ -57,6 +57,19 @@ resource "aws_iam_openid_connect_provider" "eks" {
   tags            = var.tags
 }
 
+# ── EKS Pod Identity Agent addon ──────────────────────────────────────────────
+# Not managed by Auto Mode — must be explicitly installed.
+# The agent runs as a DaemonSet and injects AWS credentials into pods via the
+# associated IAM role, with no imagePullSecrets or service account annotations needed.
+resource "aws_eks_addon" "pod_identity" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "eks-pod-identity-agent"
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  tags                        = var.tags
+  depends_on                  = [aws_eks_cluster.this]
+}
+
 # ── Node pool with custom labels via Karpenter NodePool CRD ───────────────────
 # EKS Auto Mode exposes NodePool/EC2NodeClass CRDs backed by Karpenter.
 # We create a custom NodePool that extends the built-in general-purpose pool

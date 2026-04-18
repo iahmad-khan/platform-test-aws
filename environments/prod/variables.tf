@@ -12,3 +12,8 @@ variable "kubernetes_version" {
   type    = string
   default = "1.31"
 }
+
+variable "staging_account_id" {
+  type        = string
+  description = "AWS account ID of the staging environment — used for ECR replication policy"
+}

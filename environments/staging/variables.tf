@@ -12,3 +12,13 @@ variable "kubernetes_version" {
   type    = string
   default = "1.31"
 }
+
+variable "dev_account_id" {
+  type        = string
+  description = "AWS account ID of the dev environment"
+}
+
+variable "prod_account_id" {
+  type        = string
+  description = "AWS account ID of the prod environment — used for ECR replication destination"
+}

@@ -34,7 +34,20 @@ module "security_groups" {
   tags     = local.common_tags
 }
 
-# ── 3. Base IAM Roles (no OIDC dependency) ────────────────────────────────────
+# ── 3. VPC Interface Endpoints (ECR, STS) ─────────────────────────────────────
+# Keeps ECR traffic inside the VPC — kubelet credential provider uses instance
+# metadata + these endpoints to authenticate without imagePullSecrets.
+module "vpc_endpoints" {
+  source = "../../modules/vpc-endpoints"
+
+  name               = local.name
+  vpc_id             = module.vpc.vpc_id
+  private_subnet_ids = module.vpc.private_subnet_ids
+  endpoint_sg_id     = module.security_groups.vpc_endpoint_sg_id
+  tags               = local.common_tags
+}
+
+# ── 4. Base IAM Roles (no OIDC dependency) ────────────────────────────────────
 module "iam" {
   source = "../../modules/iam"
   name   = local.name
@@ -120,7 +133,59 @@ module "route53" {
   tags                      = local.common_tags
 }
 
-# ── 9. CloudFront Distribution ────────────────────────────────────────────────
+# ── 9. ECR Repositories ───────────────────────────────────────────────────────
+module "ecr" {
+  source = "../../modules/ecr"
+
+  name                           = "aws-ecr-${local.env}"
+  image_tag_mutability           = "MUTABLE"
+  scan_on_push                   = true
+  lifecycle_untagged_expiry_days = 7
+  lifecycle_tagged_keep_count    = 20
+  # Allow only the staging CI promoter user to pull (least-privilege cross-account)
+  cross_account_pull_arns        = ["arn:aws:iam::${var.staging_account_id}:user/ci/platform-ci-ecr-promoter"]
+  tags                           = local.common_tags
+}
+
+module "ecr_clickhouse" {
+  source = "../../modules/ecr"
+
+  name                           = "clickhouse"
+  image_tag_mutability           = "IMMUTABLE"
+  scan_on_push                   = true
+  lifecycle_untagged_expiry_days = 7
+  lifecycle_tagged_keep_count    = 10
+  cross_account_pull_arns        = ["arn:aws:iam::${var.staging_account_id}:user/ci/platform-ci-ecr-promoter"]
+  tags                           = local.common_tags
+}
+
+# ── 10. Pod Identity — IAM + association ──────────────────────────────────────
+module "pod_identity" {
+  source = "../../modules/pod-identity"
+
+  name                 = local.name
+  cluster_name         = module.eks.cluster_name
+  namespace            = "demo-app"
+  service_account_name = "demo-app-sa"
+  s3_bucket_arns       = [module.s3.app_bucket_arn, module.s3.logs_bucket_arn]
+  tags                 = local.common_tags
+}
+
+# ── 11. Demo App Deployment ────────────────────────────────────────────────────
+module "demo_app" {
+  source = "../../modules/demo-app"
+
+  namespace            = "demo-app"
+  service_account_name = "demo-app-sa"
+  s3_bucket_name       = module.s3.app_bucket_id
+  aws_region           = var.aws_region
+  replicas             = 1
+  tags                 = local.common_tags
+
+  depends_on = [module.pod_identity]
+}
+
+# ── 12. CloudFront Distribution ───────────────────────────────────────────────
 module "cloudfront" {
   source = "../../modules/cloudfront"
 

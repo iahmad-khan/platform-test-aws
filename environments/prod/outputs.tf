@@ -44,6 +44,25 @@ output "external_dns_role_arn" {
   value = module.irsa.external_dns_role_arn
 }
 
+output "ecr_repository_url" {
+  value       = module.ecr.repository_url
+  description = "docker push <url>:<tag>"
+}
+
+output "ecr_clickhouse_repository_url" {
+  value       = module.ecr_clickhouse.repository_url
+  description = "docker tag clickhouse:9.1.1 <url>:9.1.1 && docker push <url>:9.1.1"
+}
+
+output "demo_app_test_commands" {
+  value = <<-EOT
+    ${module.demo_app.kubectl_port_forward}
+    curl http://localhost:8080/health
+    curl http://localhost:8080/s3
+    curl http://localhost:8080/translate
+  EOT
+}
+
 output "kubeconfig_command" {
   value = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
