@@ -210,3 +210,16 @@ module "cloudfront" {
   price_class             = "PriceClass_All"
   tags                    = local.common_tags
 }
+
+# ── AWS Shield Advanced (prod only) ───────────────────────────────────────────
+# COST: $3,000/month per AWS organisation — billed from the moment this apply runs.
+# The subscription cannot be cancelled via Terraform; contact AWS Support to cancel.
+module "shield" {
+  source = "../../modules/shield"
+
+  name                        = local.name
+  cloudfront_distribution_arn = module.cloudfront.distribution_arn
+  route53_zone_id             = module.route53.zone_id
+  nat_eip_arns                = module.vpc.nat_eip_arns
+  tags                        = local.common_tags
+}

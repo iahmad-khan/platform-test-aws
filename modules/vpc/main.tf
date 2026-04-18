@@ -1,4 +1,5 @@
 data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
 
 locals {
   nat_count = var.single_nat_gateway ? 1 : length(var.azs)

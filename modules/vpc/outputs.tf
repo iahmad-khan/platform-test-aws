@@ -17,3 +17,8 @@ output "private_subnet_ids" {
 output "private_route_table_ids" {
   value = aws_route_table.private[*].id
 }
+
+output "nat_eip_arns" {
+  value       = [for eip in aws_eip.nat : "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:eip-allocation/${eip.id}"]
+  description = "EIP allocation ARNs for NAT Gateways — used by Shield Advanced"
+}

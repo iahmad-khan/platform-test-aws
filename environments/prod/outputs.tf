@@ -54,6 +54,11 @@ output "ecr_clickhouse_repository_url" {
   description = "docker tag clickhouse:9.1.1 <url>:9.1.1 && docker push <url>:9.1.1"
 }
 
+output "shield_protection_group_id" {
+  value       = module.shield.protection_group_id
+  description = "Shield Advanced protection group covering all eligible resources"
+}
+
 output "demo_app_test_commands" {
   value = <<-EOT
     ${module.demo_app.kubectl_port_forward}
