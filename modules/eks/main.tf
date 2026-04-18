@@ -186,9 +186,18 @@ resource "helm_release" "aws_lbc" {
   create_namespace = false
   version          = "1.8.3"
 
-  set { name = "clusterName",              value = aws_eks_cluster.this.name }
-  set { name = "serviceAccount.create",    value = "true" }
-  set { name = "region",                   value = data.aws_region.current.name }
+  set {
+    name  = "clusterName"
+    value = aws_eks_cluster.this.name
+  }
+  set {
+    name  = "serviceAccount.create"
+    value = "true"
+  }
+  set {
+    name  = "region"
+    value = data.aws_region.current.name
+  }
 
   depends_on = [aws_eks_addon.pod_identity, aws_eks_pod_identity_association.lbc]
 }
@@ -202,7 +211,10 @@ resource "helm_release" "metrics_server" {
   create_namespace = false
   version          = "3.12.1"
 
-  set { name = "args[0]", value = "--kubelet-insecure-tls" }
+  set {
+    name  = "args[0]"
+    value = "--kubelet-insecure-tls"
+  }
 
   depends_on = [aws_eks_cluster.this]
 }
@@ -217,9 +229,18 @@ resource "helm_release" "kube_prometheus" {
   create_namespace = true
   version          = "61.3.2"
 
-  set { name = "grafana.adminPassword",                                                                    value = "changeme-use-secret-manager" }
-  set { name = "prometheus.prometheusSpec.retention",                                                      value = "30d" }
-  set { name = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage", value = "50Gi" }
+  set {
+    name  = "grafana.adminPassword"
+    value = "changeme-use-secret-manager"
+  }
+  set {
+    name  = "prometheus.prometheusSpec.retention"
+    value = "30d"
+  }
+  set {
+    name  = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage"
+    value = "50Gi"
+  }
 
   depends_on = [aws_eks_cluster.this]
 }
@@ -234,8 +255,14 @@ resource "helm_release" "argocd" {
   create_namespace = true
   version          = "7.3.11"
 
-  set { name = "server.service.type",                value = "ClusterIP" }
-  set { name = "configs.params.server\\.insecure",   value = "true" }
+  set {
+    name  = "server.service.type"
+    value = "ClusterIP"
+  }
+  set {
+    name  = "configs.params.server\\.insecure"
+    value = "true"
+  }
 
   depends_on = [aws_eks_cluster.this]
 }
