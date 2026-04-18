@@ -46,9 +46,9 @@ variable "public_access_cidrs" {
   description = "CIDRs allowed to reach the public API endpoint"
 }
 
-variable "alb_controller_role_arn" {
+variable "route53_zone_arn" {
   type        = string
-  description = "IRSA role ARN for AWS Load Balancer Controller"
+  description = "Route53 hosted zone ARN — used for External DNS IAM policy"
 }
 
 variable "node_tenant_label" {

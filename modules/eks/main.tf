@@ -20,7 +20,6 @@ resource "aws_eks_cluster" "this" {
     bootstrap_cluster_creator_admin_permissions = true
   }
 
-  # EKS Auto Mode: AWS manages node provisioning, networking, storage, and LB
   compute_config {
     enabled       = true
     node_pools    = ["general-purpose"]
@@ -28,39 +27,18 @@ resource "aws_eks_cluster" "this" {
   }
 
   kubernetes_network_config {
-    elastic_load_balancing {
-      enabled = true
-    }
+    elastic_load_balancing { enabled = true }
   }
 
   storage_config {
-    block_storage {
-      enabled = true
-    }
+    block_storage { enabled = true }
   }
 
-  # Auto Mode manages its own addons; disable self-managed bootstrap
   bootstrap_self_managed_addons = false
-
-  tags = var.tags
+  tags                          = var.tags
 }
 
-# ── OIDC Identity Provider ────────────────────────────────────────────────────
-data "tls_certificate" "eks" {
-  url = aws_eks_cluster.this.identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "eks" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.this.identity[0].oidc[0].issuer
-  tags            = var.tags
-}
-
-# ── EKS Pod Identity Agent addon ──────────────────────────────────────────────
-# Not managed by Auto Mode — must be explicitly installed.
-# The agent runs as a DaemonSet and injects AWS credentials into pods via the
-# associated IAM role, with no imagePullSecrets or service account annotations needed.
+# ── EKS Pod Identity Agent ─────────────────────────────────────────────────────
 resource "aws_eks_addon" "pod_identity" {
   cluster_name                = aws_eks_cluster.this.name
   addon_name                  = "eks-pod-identity-agent"
@@ -70,24 +48,116 @@ resource "aws_eks_addon" "pod_identity" {
   depends_on                  = [aws_eks_cluster.this]
 }
 
-# ── Node pool with custom labels via Karpenter NodePool CRD ───────────────────
-# EKS Auto Mode exposes NodePool/EC2NodeClass CRDs backed by Karpenter.
-# We create a custom NodePool that extends the built-in general-purpose pool
-# and stamps tenantname=<value> onto every provisioned node.
+# ── Pod Identity — helper local ────────────────────────────────────────────────
+locals {
+  pod_identity_trust = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+# ── IAM: AWS Load Balancer Controller ─────────────────────────────────────────
+resource "aws_iam_role" "lbc" {
+  name               = "${var.name}-lbc"
+  assume_role_policy = local.pod_identity_trust
+  tags               = var.tags
+}
+
+resource "aws_iam_policy" "lbc" {
+  name   = "${var.name}-lbc-policy"
+  policy = file("${path.module}/policies/alb_controller.json")
+  tags   = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "lbc" {
+  role       = aws_iam_role.lbc.name
+  policy_arn = aws_iam_policy.lbc.arn
+}
+
+resource "aws_eks_pod_identity_association" "lbc" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "kube-system"
+  service_account = "aws-load-balancer-controller"
+  role_arn        = aws_iam_role.lbc.arn
+  tags            = var.tags
+  depends_on      = [aws_eks_addon.pod_identity]
+}
+
+# ── IAM: EBS CSI Driver ────────────────────────────────────────────────────────
+resource "aws_iam_role" "ebs_csi" {
+  name               = "${var.name}-ebs-csi"
+  assume_role_policy = local.pod_identity_trust
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+resource "aws_eks_pod_identity_association" "ebs_csi" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "kube-system"
+  service_account = "ebs-csi-controller-sa"
+  role_arn        = aws_iam_role.ebs_csi.arn
+  tags            = var.tags
+  depends_on      = [aws_eks_addon.pod_identity]
+}
+
+# ── IAM: External DNS ──────────────────────────────────────────────────────────
+resource "aws_iam_role" "external_dns" {
+  name               = "${var.name}-external-dns"
+  assume_role_policy = local.pod_identity_trust
+  tags               = var.tags
+}
+
+resource "aws_iam_policy" "external_dns" {
+  name = "${var.name}-external-dns-policy"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets"]
+        Resource = [var.route53_zone_arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ListHostedZones", "route53:ListResourceRecordSets", "route53:ListTagsForResource"]
+        Resource = ["*"]
+      }
+    ]
+  })
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "external_dns" {
+  role       = aws_iam_role.external_dns.name
+  policy_arn = aws_iam_policy.external_dns.arn
+}
+
+resource "aws_eks_pod_identity_association" "external_dns" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "kube-system"
+  service_account = "external-dns"
+  role_arn        = aws_iam_role.external_dns.arn
+  tags            = var.tags
+  depends_on      = [aws_eks_addon.pod_identity]
+}
+
+# ── Node pool with custom labels ───────────────────────────────────────────────
 resource "kubernetes_manifest" "node_pool" {
   manifest = {
     apiVersion = "karpenter.sh/v1"
     kind       = "NodePool"
-    metadata = {
-      name = "${var.name}-labeled"
-    }
+    metadata   = { name = "${var.name}-labeled" }
     spec = {
       template = {
-        metadata = {
-          labels = {
-            tenantname = var.node_tenant_label
-          }
-        }
+        metadata = { labels = { tenantname = var.node_tenant_label } }
         spec = {
           nodeClassRef = {
             group = "eks.amazonaws.com"
@@ -95,30 +165,19 @@ resource "kubernetes_manifest" "node_pool" {
             name  = "default"
           }
           requirements = [
-            {
-              key      = "karpenter.sh/capacity-type"
-              operator = "In"
-              values   = ["on-demand"]
-            },
-            {
-              key      = "kubernetes.io/arch"
-              operator = "In"
-              values   = ["amd64"]
-            }
+            { key = "karpenter.sh/capacity-type", operator = "In", values = ["on-demand"] },
+            { key = "kubernetes.io/arch",          operator = "In", values = ["amd64"] }
           ]
         }
       }
-      disruption = {
-        consolidationPolicy = "WhenEmptyOrUnderutilized"
-        consolidateAfter    = "1m"
-      }
+      disruption = { consolidationPolicy = "WhenEmptyOrUnderutilized", consolidateAfter = "1m" }
     }
   }
-
   depends_on = [aws_eks_cluster.this]
 }
 
 # ── Helm: AWS Load Balancer Controller ────────────────────────────────────────
+# No IRSA annotation — Pod Identity association above provides credentials.
 resource "helm_release" "aws_lbc" {
   name             = "aws-load-balancer-controller"
   repository       = "https://aws.github.io/eks-charts"
@@ -127,31 +186,14 @@ resource "helm_release" "aws_lbc" {
   create_namespace = false
   version          = "1.8.3"
 
-  set {
-    name  = "clusterName"
-    value = aws_eks_cluster.this.name
-  }
-  set {
-    name  = "serviceAccount.create"
-    value = "true"
-  }
-  set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = var.alb_controller_role_arn
-  }
-  set {
-    name  = "region"
-    value = data.aws_region.current.name
-  }
-  set {
-    name  = "vpcId"
-    value = ""
-  }
+  set { name = "clusterName",              value = aws_eks_cluster.this.name }
+  set { name = "serviceAccount.create",    value = "true" }
+  set { name = "region",                   value = data.aws_region.current.name }
 
-  depends_on = [aws_eks_cluster.this, aws_iam_openid_connect_provider.eks]
+  depends_on = [aws_eks_addon.pod_identity, aws_eks_pod_identity_association.lbc]
 }
 
-# ── Helm: Metrics Server ──────────────────────────────────────────────────────
+# ── Helm: Metrics Server ───────────────────────────────────────────────────────
 resource "helm_release" "metrics_server" {
   name             = "metrics-server"
   repository       = "https://kubernetes-sigs.github.io/metrics-server/"
@@ -160,10 +202,7 @@ resource "helm_release" "metrics_server" {
   create_namespace = false
   version          = "3.12.1"
 
-  set {
-    name  = "args[0]"
-    value = "--kubelet-insecure-tls"
-  }
+  set { name = "args[0]", value = "--kubelet-insecure-tls" }
 
   depends_on = [aws_eks_cluster.this]
 }
@@ -178,23 +217,14 @@ resource "helm_release" "kube_prometheus" {
   create_namespace = true
   version          = "61.3.2"
 
-  set {
-    name  = "grafana.adminPassword"
-    value = "changeme-use-secret-manager"
-  }
-  set {
-    name  = "prometheus.prometheusSpec.retention"
-    value = "30d"
-  }
-  set {
-    name  = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage"
-    value = "50Gi"
-  }
+  set { name = "grafana.adminPassword",                                                                    value = "changeme-use-secret-manager" }
+  set { name = "prometheus.prometheusSpec.retention",                                                      value = "30d" }
+  set { name = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage", value = "50Gi" }
 
   depends_on = [aws_eks_cluster.this]
 }
 
-# ── Helm: ArgoCD ──────────────────────────────────────────────────────────────
+# ── Helm: ArgoCD ───────────────────────────────────────────────────────────────
 resource "helm_release" "argocd" {
   count            = var.enable_argocd ? 1 : 0
   name             = "argocd"
@@ -204,14 +234,8 @@ resource "helm_release" "argocd" {
   create_namespace = true
   version          = "7.3.11"
 
-  set {
-    name  = "server.service.type"
-    value = "ClusterIP"
-  }
-  set {
-    name  = "configs.params.server\\.insecure"
-    value = "true"
-  }
+  set { name = "server.service.type",                value = "ClusterIP" }
+  set { name = "configs.params.server\\.insecure",   value = "true" }
 
   depends_on = [aws_eks_cluster.this]
 }

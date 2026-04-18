@@ -28,10 +28,6 @@ output "cloudfront_domain" {
   value = module.cloudfront.distribution_domain_name
 }
 
-output "alb_controller_role_arn" {
-  value = module.irsa.alb_controller_role_arn
-}
-
 output "ecr_repository_url" {
   value       = module.ecr.repository_url
   description = "docker push <url>:<tag>"

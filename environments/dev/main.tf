@@ -66,24 +66,13 @@ module "eks" {
   cluster_sg_id      = module.security_groups.eks_cluster_sg_id
   node_sg_id         = module.security_groups.eks_node_sg_id
 
-  endpoint_public_access  = true
-  public_access_cidrs     = ["0.0.0.0/0"]
-  alb_controller_role_arn = module.irsa.alb_controller_role_arn
-  node_tenant_label       = "amd-hosts"
-  enable_kube_prometheus  = true
-  enable_argocd           = true
-  tags                    = local.common_tags
-}
-
-# ── 5. IRSA Roles (require EKS OIDC output) ───────────────────────────────────
-module "irsa" {
-  source = "../../modules/irsa"
-
-  name              = local.name
-  oidc_provider_arn = module.eks.oidc_provider_arn
-  oidc_provider_url = module.eks.oidc_provider_url
-  route53_zone_arn  = module.route53.zone_arn
-  tags              = local.common_tags
+  endpoint_public_access = true
+  public_access_cidrs    = ["0.0.0.0/0"]
+  route53_zone_arn       = module.route53.zone_arn
+  node_tenant_label      = "amd-hosts"
+  enable_kube_prometheus = true
+  enable_argocd          = true
+  tags                   = local.common_tags
 }
 
 # ── 6. RDS Aurora Serverless v2 ───────────────────────────────────────────────

@@ -36,14 +36,6 @@ output "cloudfront_distribution_id" {
   value = module.cloudfront.distribution_id
 }
 
-output "alb_controller_role_arn" {
-  value = module.irsa.alb_controller_role_arn
-}
-
-output "external_dns_role_arn" {
-  value = module.irsa.external_dns_role_arn
-}
-
 output "ecr_repository_url" {
   value       = module.ecr.repository_url
   description = "docker push <url>:<tag>"
