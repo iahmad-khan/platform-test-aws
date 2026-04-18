@@ -1,0 +1,63 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Terraform lock file for state (S3 native locking)
+.terraform.tfstate.lock.info
+
+# Terraform working directory
+**/.terraform/
+.terraform/
+**/.terraform*lock*
+
+# Terraform plan output
+*.tfplan
+*.plan
+
+# Terraform variable files that may contain secrets
+*.tfvars.json
+# Keep *.tfvars tracked but ignore any local overrides
+*.tfvars.local
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Crash log
+crash.log
+crash.*.log
+
+# Sensitive files
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.tf
+secrets.tfvars
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Python (if using pre-commit or scripts)
+__pycache__/
+*.pyc
+.venv/
+
+# Node (if using CDK or tooling alongside)
+node_modules/
+
+# Helm chart caches
+charts/
+
+# Local kubeconfig if accidentally placed here
+kubeconfig
+kubeconfig.*
