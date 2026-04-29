@@ -150,8 +150,11 @@ resource "aws_eks_pod_identity_association" "external_dns" {
 }
 
 # ── Node pool with custom labels ───────────────────────────────────────────────
-resource "kubernetes_manifest" "node_pool" {
-  manifest = {
+# kubernetes_manifest requires a live API server at plan time (CRD schema fetch),
+# which breaks the first apply before the cluster exists. terraform_data +
+# local-exec runs only during apply, after the cluster is ready.
+locals {
+  node_pool_manifest = jsonencode({
     apiVersion = "karpenter.sh/v1"
     kind       = "NodePool"
     metadata   = { name = "${var.name}-labeled" }
@@ -172,7 +175,19 @@ resource "kubernetes_manifest" "node_pool" {
       }
       disruption = { consolidationPolicy = "WhenEmptyOrUnderutilized", consolidateAfter = "1m" }
     }
+  })
+}
+
+resource "terraform_data" "node_pool" {
+  triggers_replace = [local.node_pool_manifest]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}
+      echo '${local.node_pool_manifest}' | kubectl apply -f -
+    EOT
   }
+
   depends_on = [aws_eks_cluster.this]
 }
 

@@ -47,6 +47,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "app" {
   rule {
     id     = "transition-to-ia"
     status = "Enabled"
+    filter {}
     transition {
       days          = 90
       storage_class = "STANDARD_IA"
@@ -126,6 +127,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
   rule {
     id     = "expire-logs"
     status = "Enabled"
+    filter {}
     expiration { days = var.log_expiry_days }
   }
 }
