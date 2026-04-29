@@ -132,3 +132,25 @@ module "artifact_registry" {
   node_service_account_email = module.security.node_service_account_email
   labels                     = local.common_labels
 }
+
+# ── Redis (Memorystore) ───────────────────────────────────────────────────────
+# BASIC tier (no failover) for dev. AUTH token stored in Secret Manager;
+# pods retrieve it at runtime via Workload Identity — no static secrets.
+
+module "redis" {
+  source = "../../modules/redis"
+
+  project_id                 = var.project_id
+  region                     = var.region
+  name                       = local.name
+  vpc_id                     = module.networking.vpc_id
+  private_service_connection = module.networking.private_service_connection
+  tier                       = "BASIC"
+  memory_size_gb             = 1
+  redis_version              = "REDIS_7_0"
+  enable_read_replica        = false
+  transit_encryption_mode    = "DISABLED"
+  gke_namespace              = "apps"
+  redis_ksa_name             = "redis-sa"
+  labels                     = local.common_labels
+}

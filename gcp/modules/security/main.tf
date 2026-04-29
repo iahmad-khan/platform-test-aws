@@ -8,6 +8,8 @@ resource "google_project_service" "apis" {
     "servicenetworking.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "artifactregistry.googleapis.com",
+    "redis.googleapis.com",
+    "secretmanager.googleapis.com",
   ])
 
   project            = var.project_id

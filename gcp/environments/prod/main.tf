@@ -134,3 +134,26 @@ module "artifact_registry" {
   cicd_service_account_email = var.cicd_service_account_email
   labels                     = local.common_labels
 }
+
+# ── Redis (Memorystore) ───────────────────────────────────────────────────────
+# STANDARD_HA tier with one read replica and TLS for prod.
+# AUTH token stored in Secret Manager; pods retrieve it via Workload Identity.
+
+module "redis" {
+  source = "../../modules/redis"
+
+  project_id                 = var.project_id
+  region                     = var.region
+  name                       = local.name
+  vpc_id                     = module.networking.vpc_id
+  private_service_connection = module.networking.private_service_connection
+  tier                       = "STANDARD_HA"
+  memory_size_gb             = 4
+  redis_version              = "REDIS_7_0"
+  enable_read_replica        = true
+  replica_count              = 1
+  transit_encryption_mode    = "SERVER_AUTHENTICATION"
+  gke_namespace              = "apps"
+  redis_ksa_name             = "redis-sa"
+  labels                     = local.common_labels
+}

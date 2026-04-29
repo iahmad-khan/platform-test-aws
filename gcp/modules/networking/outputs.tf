@@ -2,6 +2,12 @@ output "vpc_self_link" {
   value = google_compute_network.vpc.self_link
 }
 
+# Resource ID format (projects/{project}/global/networks/{name}) required by
+# Memorystore Redis authorized_network field.
+output "vpc_id" {
+  value = google_compute_network.vpc.id
+}
+
 output "subnet_self_link" {
   value = google_compute_subnetwork.nodes.self_link
 }

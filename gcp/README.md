@@ -22,8 +22,11 @@ GKE Ingress → Services → Pods
    │                         → ARM64 nodes (t2a, on arm64 node selector)
    │                         → GPU nodes  (T4 / A100 / L4, on nvidia.com/gpu request)
    │
-   ├── Workload Identity → Cloud SQL (Auth Proxy, no passwords)
-   └── Workload Identity → Cloud Storage (object read/write)
+   ├── Workload Identity → Cloud SQL      (Auth Proxy, IAM DB auth, no passwords)
+   ├── Workload Identity → Cloud Storage  (object read/write)
+   └── Workload Identity → Redis          (AUTH token from Secret Manager)
+             └── Memorystore Redis ← private IP, VPC-only, AUTH enabled
+                   └── Secret Manager ← stores GCP-generated AUTH token
 
 Artifact Registry ← GKE node SA pulls images without imagePullSecrets
 ```
@@ -41,6 +44,7 @@ Artifact Registry ← GKE node SA pulls images without imagePullSecrets
 | [cloud_storage](modules/cloud_storage/) | Versioned GCS bucket, public access prevented, Workload Identity IAM binding |
 | [cloud_armor](modules/cloud_armor/) | Cloud Armor security policy: Adaptive DDoS, OWASP WAF, rate limiting, IP allowlist/denylist |
 | [artifact_registry](modules/artifact_registry/) | Docker repository, node SA reader access for passwordless image pulls |
+| [redis](modules/redis/) | Memorystore Redis (BASIC or STANDARD_HA), AUTH token in Secret Manager, Workload Identity GSA |
 
 ---
 
@@ -140,6 +144,10 @@ kubectl get nodes
 | Backup retention | 3 backups | 3 backups |
 | Armor rate limit | 500 req/min | 200 req/min |
 | master_authorized_networks | 0.0.0.0/0 | VPN CIDR only |
+| Redis tier | BASIC (no failover) | STANDARD_HA (auto-failover) |
+| Redis memory | 1 GiB | 4 GiB |
+| Redis read replica | disabled | 1 replica |
+| Redis TLS | DISABLED | SERVER_AUTHENTICATION |
 
 ---
 
@@ -311,6 +319,115 @@ The prod environment creates a read replica. Applications connect to:
 
 ---
 
+### Redis (Memorystore)
+
+**How Workload Identity works for Redis:**
+
+Because Memorystore doesn't support IAM-based database authentication (unlike Cloud SQL), the AUTH token is managed by GCP and stored in Secret Manager. Pods use their Workload Identity to call Secret Manager and retrieve the token at startup — no static Kubernetes Secrets are needed.
+
+```
+Pod (KSA: redis-sa)
+  └─ Workload Identity → GSA: gke-dev-redis@PROJECT.iam.gserviceaccount.com
+       └─ secretmanager.secretAccessor → Secret: gke-dev-redis-auth
+            └─ token value → redis.Redis(host=HOST, password=token)
+```
+
+**Step 1 — Create the Kubernetes ServiceAccount:**
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-sa          # must match var.redis_ksa_name
+  namespace: apps         # must match var.gke_namespace
+  annotations:
+    iam.gke.io/gcp-service-account: <redis_gsa_email>  # from terraform output
+```
+```bash
+# Get the GSA email
+terraform output redis_gsa_email
+```
+
+**Step 2 — Fetch the Redis host and secret name:**
+```bash
+terraform output redis_host        # private IP — only reachable from within VPC
+terraform output redis_auth_secret # e.g. gke-dev-redis-auth
+```
+
+**Step 3 — Application code (Python / go-redis):**
+```python
+# Python — using google-cloud-secret-manager and redis-py
+from google.cloud import secretmanager
+import redis, os
+
+def get_redis_client():
+    sm = secretmanager.SecretManagerServiceClient()
+    project_id = os.environ["GCP_PROJECT"]
+    secret_id  = os.environ["REDIS_AUTH_SECRET"]   # from terraform output
+    resp = sm.access_secret_version(
+        name=f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+    )
+    auth = resp.payload.data.decode("utf-8")
+    return redis.Redis(
+        host=os.environ["REDIS_HOST"],   # from terraform output
+        port=6379,
+        password=auth,
+        decode_responses=True,
+    )
+```
+
+```go
+// Go — using go-redis and Google Secret Manager SDK
+import (
+    secretmanager "cloud.google.com/go/secretmanager/apiv1"
+    smpb "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
+    goredis "github.com/redis/go-redis/v9"
+)
+
+func newRedisClient(ctx context.Context) *goredis.Client {
+    smc, _ := secretmanager.NewClient(ctx)
+    defer smc.Close()
+    resp, _ := smc.AccessSecretVersion(ctx, &smpb.AccessSecretVersionRequest{
+        Name: fmt.Sprintf("projects/%s/secrets/%s/versions/latest",
+            os.Getenv("GCP_PROJECT"), os.Getenv("REDIS_AUTH_SECRET")),
+    })
+    return goredis.NewClient(&goredis.Options{
+        Addr:     os.Getenv("REDIS_HOST") + ":6379",
+        Password: string(resp.Payload.Data),
+    })
+}
+```
+
+**Prod — read replica (separate endpoint for read-only traffic):**
+```python
+# Write client → primary
+write_client = redis.Redis(host=PRIMARY_HOST, port=6379, password=auth)
+
+# Read client → read replica (lower latency for cache reads)
+read_client = redis.Redis(host=READ_HOST, port=READ_PORT, password=auth)
+```
+```bash
+terraform output redis_read_endpoint      # read replica host
+terraform output redis_read_endpoint_port # read replica port (default 6379)
+```
+
+**Prod — TLS configuration (`SERVER_AUTHENTICATION` mode):**
+```bash
+# Retrieve the server CA certificate
+gcloud redis instances describe gke-prod-redis \
+  --region=us-east1 \
+  --format="value(serverCaCerts[0].cert)" > redis-ca.pem
+```
+```python
+import ssl
+tls_ctx = ssl.create_default_context(cafile="redis-ca.pem")
+client = redis.Redis(
+    host=REDIS_HOST, port=6379, password=auth,
+    ssl=True, ssl_ca_certs="redis-ca.pem",
+)
+```
+
+---
+
 ## Testing
 
 ### Terraform validation (no GCP credentials needed)
@@ -381,6 +498,32 @@ EOF
 kubectl wait pod/gpu-test --for=condition=Ready --timeout=300s
 kubectl logs gpu-test   # should show GPU device info
 kubectl delete pod gpu-test
+```
+
+### Redis connectivity test
+```bash
+# Get Redis host and auth token
+REDIS_HOST=$(terraform output -raw redis_host)
+REDIS_SECRET=$(terraform output -raw redis_auth_secret)
+AUTH_TOKEN=$(gcloud secrets versions access latest --secret="$REDIS_SECRET")
+
+# Run a redis-cli pod inside the cluster to verify connectivity
+kubectl run redis-test --rm -it \
+  --image=redis:7-alpine \
+  --restart=Never \
+  -- redis-cli -h "$REDIS_HOST" -a "$AUTH_TOKEN" PING
+# Expected: PONG
+
+# Test Workload Identity path: fetch token from Secret Manager inside the cluster
+kubectl run wi-redis-test \
+  --rm -it \
+  --image=google/cloud-sdk:slim \
+  --overrides='{"spec":{"serviceAccountName":"redis-sa"}}' \
+  --restart=Never \
+  -- gcloud secrets versions access latest \
+       --secret="$REDIS_SECRET" \
+       --project=MY_PROJECT
+# Expected: prints the raw AUTH token
 ```
 
 ### ARM64 scheduling test

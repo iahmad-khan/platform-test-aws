@@ -31,6 +31,25 @@ output "cloud_armor_policy" {
   description = "Set this in the BackendConfig spec.securityPolicy.name field"
 }
 
+output "redis_host" {
+  value     = module.redis.host
+  sensitive = true
+}
+
+output "redis_port" {
+  value = module.redis.port
+}
+
+output "redis_auth_secret" {
+  value       = module.redis.auth_secret_id
+  description = "Fetch the AUTH token: gcloud secrets versions access latest --secret=<this value>"
+}
+
+output "redis_gsa_email" {
+  value       = module.redis.redis_gsa_email
+  description = "Annotate your Kubernetes ServiceAccount with this GSA email for Workload Identity"
+}
+
 output "kubeconfig_command" {
   value = "gcloud container clusters get-credentials ${module.gke.cluster_name} --region ${var.region} --project ${var.project_id}"
 }
