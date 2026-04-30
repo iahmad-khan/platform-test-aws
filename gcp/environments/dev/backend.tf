@@ -1,8 +1,13 @@
 terraform {
   backend "gcs" {
-    # Pre-create this bucket before running terraform init.
-    # gsutil mb -p <project> gs://gke-platform-tfstate-dev
-    bucket = "gke-platform-tfstate-dev"
-    prefix = "gcp/dev/terraform.tfstate"
+    # State is stored in the dev GCP project.
+    # Create the bucket once before terraform init:
+    #   gcloud storage buckets create gs://gke-platform-tfstate-dev \
+    #     --project=YOUR_DEV_PROJECT_ID \
+    #     --location=us-east1 \
+    #     --uniform-bucket-level-access
+    project = "YOUR_DEV_PROJECT_ID"   # keep in sync with project_id in terraform.tfvars
+    bucket  = "gke-platform-tfstate-dev"
+    prefix  = "gcp/dev/terraform.tfstate"
   }
 }

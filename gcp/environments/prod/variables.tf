@@ -1,6 +1,11 @@
 variable "project_id" {
   type        = string
-  description = "GCP project ID to deploy into"
+  description = "GCP project ID for the prod environment — must be a dedicated project, not shared with dev"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be a valid GCP project ID (6-30 chars, lowercase letters, digits, hyphens)."
+  }
 }
 
 variable "region" {
