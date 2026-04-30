@@ -68,6 +68,15 @@ module "gke" {
   gpu_l4_max                  = 4
   enable_binary_authorization = false
 
+  # Regional cluster — nodes and NAP pools spread across all zones in var.region.
+  # Restrict to 2 zones in dev to reduce system node count (1 node × 2 zones = 2 nodes).
+  node_locations = ["${var.region}-b", "${var.region}-c"]
+
+  # Blue-green upgrade settings (faster cadence acceptable in dev)
+  blue_green_soak_duration       = "120s"
+  blue_green_batch_percentage    = 0.50
+  blue_green_batch_soak_duration = "60s"
+
   labels = local.common_labels
 }
 

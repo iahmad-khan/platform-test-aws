@@ -123,6 +123,30 @@ variable "maintenance_end_time" {
   default = "2025-01-01T06:00:00Z"
 }
 
+variable "node_locations" {
+  type        = list(string)
+  default     = []
+  description = "Explicit zones for node pools within var.region; empty = all zones in the region (recommended for HA)"
+}
+
+variable "blue_green_soak_duration" {
+  type        = string
+  default     = "300s"
+  description = "How long GKE waits after a batch of nodes is healthy before upgrading the next batch"
+}
+
+variable "blue_green_batch_percentage" {
+  type        = number
+  default     = 0.20
+  description = "Fraction of nodes upgraded per batch (0.0–1.0); 0.20 = 20% at a time"
+}
+
+variable "blue_green_batch_soak_duration" {
+  type        = string
+  default     = "120s"
+  description = "How long GKE waits between batches during a blue-green node upgrade"
+}
+
 variable "labels" {
   type    = map(string)
   default = {}

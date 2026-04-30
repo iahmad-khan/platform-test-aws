@@ -67,6 +67,15 @@ module "gke" {
   gpu_l4_max                  = 16
   enable_binary_authorization = true
 
+  # All 3 zones in var.region for maximum HA. System pool: 3 nodes × 3 zones = 9 nodes.
+  # NAP provisions application and GPU nodes across the same 3 zones automatically.
+  node_locations = ["${var.region}-b", "${var.region}-c", "${var.region}-d"]
+
+  # Conservative blue-green upgrade settings for prod: 20% per batch, 5-min soak
+  blue_green_soak_duration       = "300s"
+  blue_green_batch_percentage    = 0.20
+  blue_green_batch_soak_duration = "120s"
+
   labels = local.common_labels
 }
 

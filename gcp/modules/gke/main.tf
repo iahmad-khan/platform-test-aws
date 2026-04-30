@@ -5,6 +5,10 @@ resource "google_container_cluster" "cluster" {
   name     = "${var.name}-cluster"
   location = var.region
 
+  # Regional cluster: nodes are spread across all zones in var.region by default.
+  # Set node_locations to restrict to specific zones (e.g. ["us-east1-b","us-east1-c"]).
+  node_locations = length(var.node_locations) > 0 ? var.node_locations : null
+
   network    = var.network_self_link
   subnetwork = var.subnetwork_self_link
 
@@ -111,9 +115,14 @@ resource "google_container_cluster" "cluster" {
       image_type = "COS_CONTAINERD"
 
       upgrade_settings {
-        strategy        = "SURGE"
-        max_surge       = 1
-        max_unavailable = 0
+        strategy = "BLUE_GREEN"
+        blue_green_settings {
+          node_pool_soak_duration = var.blue_green_soak_duration
+          standard_rollout_policy {
+            batch_percentage    = var.blue_green_batch_percentage
+            batch_soak_duration = var.blue_green_batch_soak_duration
+          }
+        }
       }
     }
   }
@@ -228,8 +237,13 @@ resource "google_container_node_pool" "system" {
   }
 
   upgrade_settings {
-    strategy        = "SURGE"
-    max_surge       = 1
-    max_unavailable = 0
+    strategy = "BLUE_GREEN"
+    blue_green_settings {
+      node_pool_soak_duration = var.blue_green_soak_duration
+      standard_rollout_policy {
+        batch_percentage    = var.blue_green_batch_percentage
+        batch_soak_duration = var.blue_green_batch_soak_duration
+      }
+    }
   }
 }

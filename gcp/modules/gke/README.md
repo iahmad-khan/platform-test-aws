@@ -1,6 +1,6 @@
 # Module: gke
 
-Creates a private, VPC-native GKE Standard cluster with Node Auto Provisioning (NAP), Workload Identity, Dataplane V2, and a dedicated system node pool. NAP automatically provisions x86, ARM64, and GPU node pools on demand.
+Creates a private, regional (multi-zone), VPC-native GKE Standard cluster with Node Auto Provisioning (NAP), Workload Identity, Dataplane V2, and a dedicated system node pool. NAP automatically provisions x86, ARM64, and GPU node pools on demand across all zones in the region. Node upgrades use a blue-green strategy — new nodes are provisioned before old ones are drained, preventing disruption.
 
 ## Resources created
 
@@ -33,6 +33,10 @@ Creates a private, VPC-native GKE Standard cluster with Node Auto Provisioning (
 | `gpu_t4_max` | `number` | `16` | Max NVIDIA T4 GPUs; set `0` to disable T4 nodes |
 | `gpu_a100_max` | `number` | `8` | Max NVIDIA A100 GPUs; set `0` to disable A100 nodes |
 | `gpu_l4_max` | `number` | `16` | Max NVIDIA L4 GPUs; set `0` to disable L4 nodes |
+| `node_locations` | `list(string)` | `[]` | Explicit zones for node pools; empty = all zones in `var.region` (recommended for HA) |
+| `blue_green_soak_duration` | `string` | `"300s"` | Wait time after each batch is healthy before upgrading the next batch |
+| `blue_green_batch_percentage` | `number` | `0.20` | Fraction of nodes upgraded per batch (0.0–1.0) |
+| `blue_green_batch_soak_duration` | `string` | `"120s"` | Wait time between batches |
 | `maintenance_start_time` | `string` | `"2025-01-01T00:00:00Z"` | Start of the weekly maintenance window |
 | `maintenance_end_time` | `string` | `"2025-01-01T06:00:00Z"` | End of the weekly maintenance window |
 | `labels` | `map(string)` | `{}` | Resource labels applied to the cluster |
@@ -75,8 +79,48 @@ module "gke" {
   gpu_a100_max                = 0
   gpu_l4_max                  = 4
   enable_binary_authorization = false
-  labels                      = { environment = "dev", managed_by = "terraform" }
+
+  # 2 zones in dev keeps system node count to 2 (1 node × 2 zones)
+  node_locations = ["us-east1-b", "us-east1-c"]
+
+  # Faster blue-green cadence for dev; use conservative defaults for prod
+  blue_green_soak_duration       = "120s"
+  blue_green_batch_percentage    = 0.50
+  blue_green_batch_soak_duration = "60s"
+
+  labels = { environment = "dev", managed_by = "terraform" }
 }
+```
+
+## Multi-zone (regional) cluster
+
+Setting `location = var.region` (e.g. `us-east1`) creates a **regional cluster**: the control plane is replicated across 3 zones and nodes are distributed across all zones in the region by default. NAP provisions application and GPU node pools in the same set of zones automatically.
+
+Use `node_locations` to pin nodes to a specific subset of zones:
+```hcl
+# All 3 zones (prod — maximum HA)
+node_locations = ["us-east1-b", "us-east1-c", "us-east1-d"]
+
+# 2 zones (dev — reduces system node count and cost)
+node_locations = ["us-east1-b", "us-east1-c"]
+```
+
+**System node count with regional clusters**: `system_node_count` is per zone. With `system_node_count = 3` and 3 `node_locations`, GKE creates 9 system nodes total (3 × 3). In dev, `system_node_count = 1` across 2 zones = 2 system nodes.
+
+## Blue-green node upgrades
+
+Both the system node pool and all NAP-provisioned pools use the `BLUE_GREEN` upgrade strategy. During a GKE version upgrade:
+
+1. GKE provisions `batch_percentage` (e.g. 20%) of new nodes running the updated version.
+2. Workloads are drained from the equivalent old nodes and rescheduled on the new ones.
+3. GKE waits `batch_soak_duration` before upgrading the next batch.
+4. After all nodes are upgraded, GKE waits `node_pool_soak_duration` before marking the upgrade complete.
+
+This ensures zero-downtime upgrades: new capacity exists before old nodes are drained.
+
+```
+prod defaults: 20% per batch → 120 s soak → repeat → 300 s final soak
+dev  defaults: 50% per batch →  60 s soak → repeat → 120 s final soak
 ```
 
 ## VPC-native networking
@@ -120,3 +164,5 @@ Application pods must either tolerate this taint or rely on NAP to provision an 
 - **Dataplane V2** — uses eBPF (Cilium) instead of kube-proxy. `network_policy.enabled` must be `false` when `datapath_provider = "ADVANCED_DATAPATH"`.
 - **Binary Authorization** — when `enable_binary_authorization = true`, only images signed by your attestors can be deployed. You must configure attestors and policies separately before enabling this in production.
 - **Deleting a prod cluster** — set `deletion_protection = false` and apply before running `terraform destroy`.
+- **Blue-green and surge are mutually exclusive** — the `blue_green_settings` block must be absent when `strategy = "SURGE"` and vice versa; the module enforces `BLUE_GREEN` for all pools.
+- **Blue-green requires extra node quota** — during an upgrade GKE temporarily runs both old and new nodes simultaneously. Ensure your project has headroom for `batch_percentage × node_count` extra nodes.
