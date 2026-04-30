@@ -19,6 +19,16 @@ resource "google_project_service" "secretmanager" {
 # that was set up by the networking module for Cloud SQL. No extra VPC peering
 # is created, and no reserved_ip_range block is required.
 
+# terraform_data stores the PSA connection ID as its input, which forces
+# Terraform to resolve google_service_networking_connection.private_service
+# (in the networking module) before this resource is created. Without this,
+# var.private_service_connection would never be referenced inside any resource
+# in this module and the ordering guarantee would only hold at the module
+# boundary, which is insufficient when apply is run with -target or in parallel.
+resource "terraform_data" "psa_ready" {
+  input = var.private_service_connection
+}
+
 resource "google_redis_instance" "cache" {
   project        = var.project_id
   name           = "${var.name}-redis"
@@ -28,7 +38,9 @@ resource "google_redis_instance" "cache" {
   memory_size_gb = var.memory_size_gb
   redis_version  = var.redis_version
 
-  authorized_network = var.vpc_id       # projects/{project}/global/networks/{name}
+  # Same VPC as the GKE cluster (projects/{project}/global/networks/{name}).
+  # Both GKE and Memorystore sit on this VPC; pods reach Redis via its private IP.
+  authorized_network = var.vpc_id
   connect_mode       = "PRIVATE_SERVICE_ACCESS"
 
   auth_enabled            = true
@@ -54,12 +66,10 @@ resource "google_redis_instance" "cache" {
 
   labels = var.labels
 
-  # PSA peering must exist before Memorystore can allocate a private IP.
-  # Passing private_service_connection as a variable value carries this implicit
-  # dependency without needing depends_on on a variable (which Terraform disallows).
   depends_on = [
     google_project_service.redis,
     google_project_service.secretmanager,
+    terraform_data.psa_ready,
   ]
 }
 
